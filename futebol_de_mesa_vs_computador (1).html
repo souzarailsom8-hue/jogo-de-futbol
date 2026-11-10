@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Futebol de Mesa | Jogador x Computador</title>
+<style>
+:root{--bg:#0f172a;--panel:#111827;--text:#e2e8f0;--blue:#38bdf8;--purple:#c084fc}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:radial-gradient(circle at top,#1e293b,var(--bg) 65%);color:var(--text);font-family:Arial,Helvetica,sans-serif}
+.game-shell{width:min(95vw,940px);padding:22px;background:rgba(17,24,39,.96);border:1px solid #475569;border-radius:18px;box-shadow:0 18px 45px #0008}
+h1{text-align:center;margin:0 0 8px;letter-spacing:2px;font-size:clamp(1.5rem,4vw,2.5rem)}
+.subtitle{text-align:center;color:#cbd5e1;margin:0 0 18px}
+.hud{display:flex;justify-content:center;gap:18px;margin-bottom:14px}
+.score-box{min-width:125px;text-align:center;padding:10px 16px;background:#1f2937;border:1px solid #475569;border-radius:12px}
+.score-box span{display:block;font-size:12px;letter-spacing:1px;color:#cbd5e1}
+.score-box strong{display:block;font-size:32px;margin-top:3px}
+canvas{display:block;width:100%;height:auto;border:3px solid #64748b;border-radius:12px;background:#166534}
+.settings,.controls{display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;margin-top:15px}
+label{color:#cbd5e1;font-size:14px}
+select,button{border:0;border-radius:999px;padding:11px 18px;font-size:15px;font-weight:bold}
+select{background:#334155;color:white}
+button{cursor:pointer;color:white;background:linear-gradient(135deg,var(--blue),#8b5cf6)}
+button.secondary{background:#475569}
+button:hover{filter:brightness(1.12)}
+.instructions{text-align:center;color:#cbd5e1;line-height:1.6;font-size:14px;margin-top:14px}
+@media(max-width:520px){.game-shell{padding:12px}.score-box{min-width:105px}.settings,.controls{gap:8px}}
+</style>
+</head>
+<body>
+<main class="game-shell">
+  <h1>⚽ FUTEBOL DE MESA</h1>
+  <p class="subtitle">Você contra o computador</p>
+  <section class="hud">
+    <div class="score-box"><span>VOCÊ</span><strong id="playerScore">0</strong></div>
+    <div class="score-box"><span>COMPUTADOR</span><strong id="aiScore">0</strong></div>
+  </section>
+  <canvas id="gameCanvas" width="860" height="500" aria-label="Campo do jogo"></canvas>
+  <div class="settings">
+    <label for="difficulty">Dificuldade:</label>
+    <select id="difficulty">
+      <option value="easy">Fácil</option>
+      <option value="medium" selected>Médio</option>
+      <option value="hard">Difícil</option>
+    </select>
+  </div>
+  <div class="controls">
+    <button id="startBtn">INICIAR PARTIDA</button>
+    <button id="resetBtn" class="secondary">REINICIAR</button>
+  </div>
+  <div class="instructions">
+    <strong>VOCÊ:</strong> teclas W e S para mover sua barra.<br>
+    <strong>COMPUTADOR:</strong> controla o adversário automaticamente.<br>
+    Primeiro a marcar 7 gols vence!
+  </div>
+</main>
+<script>
+const canvas=document.getElementById("gameCanvas");
+const ctx=canvas.getContext("2d");
+const playerScoreEl=document.getElementById("playerScore");
+const aiScoreEl=document.getElementById("aiScore");
+const difficultyEl=document.getElementById("difficulty");
+const W=canvas.width,H=canvas.height;
+const PW=15,PH=104,BR=11,WIN=7;
+const LEFT=30,RIGHT=W-30-PW;
+const state={
+ playerY:H/2-PH/2,aiY:H/2-PH/2,
+ playerScore:0,aiScore:0,
+ ballX:W/2,ballY:H/2,ballVx:5,ballVy:2,
+ playing:false,winner:"",lastPoint:""
+};
+const keys={up:false,down:false};
+function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+function difficulty(){
+ return {
+  easy:{speed:3.1,error:75,reaction:.075},
+  medium:{speed:4.5,error:32,reaction:.12},
+  hard:{speed:5.8,error:9,reaction:.2}
+ }[difficultyEl.value];
+}
+function resetBall(direction=1){
+ state.ballX=W/2;state.ballY=H/2;
+ const speed=4.8+Math.random()*1.1;
+ state.ballVx=direction*speed;
+ state.ballVy=(Math.random()-.5)*5.5;
+}
+function updateScore(){
+ playerScoreEl.textContent=state.playerScore;
+ aiScoreEl.textContent=state.aiScore;
+}
+function resetMatch(){
+ state.playerScore=0;state.aiScore=0;state.playing=false;
+ state.winner="";state.lastPoint="";
+ state.playerY=H/2-PH/2;state.aiY=H/2-PH/2;
+ resetBall(1);updateScore();draw();
+}
+function updatePlayer(){
+ const speed=7;
+ if(keys.up)state.playerY-=speed;
+ if(keys.down)state.playerY+=speed;
+ state.playerY=clamp(state.playerY,0,H-PH);
+}
+function predictBallY(){
+ // Estima onde a bola chegará à altura do computador, refletindo nas bordas.
+ if(state.ballVx<=0)return state.ballY;
+ const targetX=RIGHT-BR;
+ const time=(targetX-state.ballX)/state.ballVx;
+ let y=state.ballY+state.ballVy*time;
+ const span=H-2*BR;
+ let folded=((y-BR)%(2*span)+2*span)%(2*span);
+ if(folded>span)folded=2*span-folded;
+ return BR+folded;
+}
+function updateAI(){
+ const d=difficulty();
+ let target=H/2-PH/2;
+ if(state.ballVx>0){
+  target=predictBallY()-PH/2;
+  target+=Math.sin(Date.now()/420)*d.error*.18;
+ }else{
+  target=H/2-PH/2;
+ }
+ const delta=target-state.aiY;
+ const step=clamp(delta*d.reaction,-d.speed,d.speed);
+ state.aiY=clamp(state.aiY+step,0,H-PH);
+}
+function point(scoringSide){
+ if(scoringSide==="player")state.playerScore++;
+ else state.aiScore++;
+ updateScore();
+ if(state.playerScore>=WIN){state.winner="VOCÊ VENCEU!";}
+ else if(state.aiScore>=WIN){state.winner="O COMPUTADOR VENCEU!";}
+ if(state.winner){state.playing=false;return}
+ resetBall(scoringSide==="player"?-1:1);
+}
+function updateBall(){
+ state.ballX+=state.ballVx;state.ballY+=state.ballVy;
+ if(state.ballY-BR<=8||state.ballY+BR>=H-8){
+  state.ballVy*=-1;state.ballY=clamp(state.ballY,BR+8,H-BR-8);
+ }
+ // Colisão com a barra do jogador
+ if(state.ballVx<0&&state.ballX-BR<=LEFT+PW&&state.ballX+BR>=LEFT&&state.ballY+BR>=state.playerY&&state.ballY-BR<=state.playerY+PH){
+  const impact=(state.ballY-(state.playerY+PH/2))/(PH/2);
+  state.ballX=LEFT+PW+BR;state.ballVx=Math.min(Math.abs(state.ballVx)+.25,9);
+  state.ballVy=impact*6.2;
+ }
+ // Colisão com a barra controlada pela IA
+ if(state.ballVx>0&&state.ballX+BR>=RIGHT&&state.ballX-BR<=RIGHT+PW&&state.ballY+BR>=state.aiY&&state.ballY-BR<=state.aiY+PH){
+  const impact=(state.ballY-(state.aiY+PH/2))/(PH/2);
+  state.ballX=RIGHT-BR;state.ballVx=-Math.min(Math.abs(state.ballVx)+.25,9);
+  state.ballVy=impact*6.2;
+ }
+ if(state.ballX < -BR)point("computer");
+ if(state.ballX > W+BR)point("player");
+}
+function drawField(){
+ ctx.fillStyle="#15803d";ctx.fillRect(0,0,W,H);
+ for(let i=0;i<10;i++){ctx.fillStyle=i%2===0?"rgba(255,255,255,.045)":"rgba(0,0,0,.045)";ctx.fillRect(i*W/10,0,W/10,H)}
+ ctx.strokeStyle="rgba(255,255,255,.85)";ctx.lineWidth=3;
+ ctx.strokeRect(8,8,W-16,H-16);
+ ctx.beginPath();ctx.moveTo(W/2,8);ctx.lineTo(W/2,H-8);ctx.stroke();
+ ctx.beginPath();ctx.arc(W/2,H/2,75,0,Math.PI*2);ctx.stroke();
+ ctx.fillStyle="white";ctx.beginPath();ctx.arc(W/2,H/2,4,0,Math.PI*2);ctx.fill();
+ ctx.strokeRect(8,150,100,200);ctx.strokeRect(W-108,150,100,200);
+ // Traves estilizadas
+ ctx.fillStyle="rgba(226,232,240,.22)";
+ ctx.fillRect(0,H/2-65,10,130);ctx.fillRect(W-10,H/2-65,10,130);
+}
+function drawPaddle(x,y,color){
+ ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=13;
+ ctx.fillRect(x,y,PW,PH);ctx.shadowBlur=0;
+}
+function drawBall(){
+ ctx.beginPath();ctx.arc(state.ballX,state.ballY,BR,0,Math.PI*2);
+ ctx.fillStyle="#fff";ctx.shadowColor="#fff";ctx.shadowBlur=12;ctx.fill();ctx.shadowBlur=0;
+}
+function drawOverlay(){
+ if(state.playing)return;
+ ctx.fillStyle="rgba(15,23,42,.76)";ctx.fillRect(0,0,W,H);
+ ctx.textAlign="center";ctx.fillStyle="#fff";ctx.font="bold 38px Arial";
+ ctx.fillText(state.winner||"FUTEBOL DE MESA",W/2,H/2-12);
+ ctx.font="20px Arial";ctx.fillStyle="#cbd5e1";
+ ctx.fillText(state.winner?"Clique em REINICIAR para jogar novamente":"Clique em INICIAR PARTIDA",W/2,H/2+30);
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);drawField();
+ drawPaddle(LEFT,state.playerY,"#38bdf8");
+ drawPaddle(RIGHT,state.aiY,"#c084fc");
+ drawBall();drawOverlay();
+}
+function loop(){
+ if(state.playing){updatePlayer();updateAI();updateBall()}
+ draw();requestAnimationFrame(loop);
+}
+document.getElementById("startBtn").addEventListener("click",()=>{
+ if(state.winner)resetMatch();
+ state.winner="";state.playing=true;resetBall(Math.random()<.5?-1:1);
+});
+document.getElementById("resetBtn").addEventListener("click",resetMatch);
+window.addEventListener("keydown",e=>{
+ const k=e.key.toLowerCase();
+ if(k==="w"||k==="s")e.preventDefault();
+ if(k==="w")keys.up=true;if(k==="s")keys.down=true;
+});
+window.addEventListener("keyup",e=>{
+ const k=e.key.toLowerCase();
+ if(k==="w")keys.up=false;if(k==="s")keys.down=false;
+});
+window.addEventListener("blur",()=>{keys.up=false;keys.down=false});
+resetMatch();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
